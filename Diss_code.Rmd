@@ -1,0 +1,288 @@
+---
+title: "Dissertation_code"
+author: "Me"
+date: "2025-05-26"
+output: html_document
+---
+
+Load the libraries
+```{r}
+library(dplyr)
+library(data.table)
+```
+
+Load the data in accessed from ukbiobank
+```{r}
+load('data_edward_060225.Robj')
+
+# check to see if its loaded
+head(x)
+```
+
+Descriptive statistics
+```{r}
+# Shows the mean, median and quartile ranges. And NAs.For each column
+summary(x)
+
+# More specific stats per column
+mean(x$height)
+sd(x$height) #standard deviation
+var(x$height) # variance
+```
+
+Trim the data, filter for caucasian
+```{r}
+# Using dplyr
+trim_x <- x %>%
+  Select(id, age, sex, cbp, height, weight, sheight, trunkmass, centre,
+         ethn) %>%
+  Filter(ethn == 'Caucasian')
+
+# filters to 409692
+```
+
+Observe distributions of column data
+```{r}
+# Create histograms on base R
+png('name_of_hist', width = 800, height = 600)
+hist(x$column_name)
+dev.off()
+
+# Observe distribution to cut off outliers 
+
+
+```
+
+Perform linear regression analysis and make forest plots
+```{r}
+# Use the formula
+glm(formula = cbp ~ scale(variable) + sex +      as.factor(centre), family =          binomial(), data = x_trimmed)
+
+# create forest plots
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+forest_plot <- ggplot(new_regression_data, aes(x = Estimate, y = reorder(Variable, Estimate), 
+                                               color = Sex, shape = Sex)) +
+  geom_point(size = 4, position = position_dodge(width = 0.5)) +
+  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.7, color = "gray50") +
+  scale_color_manual(values = c("Male" = "#2E86AB", "Female" = "#A23B72")) +
+  scale_shape_manual(values = c("Male" = 16, "Female" = 17)) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_line(color = "gray90", size = 0.5),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 11),
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = "Forest Plot: Regression Estimates by Variable and Sex",
+    x = "Estimate",
+    y = "Variable",
+    color = "Sex",
+    shape = "Sex"
+  ) +
+  scale_x_continuous(breaks = seq(-0.1, 0.4, 0.05), labels = scales::number_format(accuracy = 0.01))
+
+
+```
+
+
+
+Make sumstats
+```{r}
+# wget files from excel
+> cbp_gwas <- fread('3571.gwas.imputed_v3.both_sexes.tsv.bgz', header = TRUE) 
+> variants_gwas <- read.table('variants.tsv.bgz'), header = TRUE, sep = '\t') 
+# merge using variant column
+merged_table <- inner_join(cbp_gwas, variants_gwas, by = 'variant')
+
+gwas_cbp <- merged_table %>% select(rsid, ref, alt, AF, se, pval, beta, n_complete_samples)
+
+ fcbp <- fbp %>%
++ rename(SNP = rsid, A1 = ref, A2 = alt, EAF = AF, BETA = beta, P = pval, SE = se, N = n_complete_samples)
+ 
+ fwrite(gwas_cbp, file = 'cbp_sumstats.txt', row.names = FALSE, sep = '\t', quote = FALSE)
+```
+
+running MR
+```{r}
+library(TwoSampleMR)
+
+expo_dat <- read_exposure_data(filename = 'SH2H_sumstats.txt', sep = '\t', snp_col = 'SNP', beta_col = 'BETA', se_col = 'SE', effect_allele_col = 'A1', other_allele_col = 'A2', eaf_col = 'EAF', pval_col = 'P')
+outcome_dat <- read_outcome_data(filename = 'cbp_sumstats.txt', sep = '\t', 
+                               snp_col = 'SNP', beta_col = 'BETA', 
+                               se_col = 'SE', effect_allele_col = 'A1', 
+                               other_allele_col = 'A2', eaf_col = 'EAF', 
+                               pval_col = 'P')
+
+dat <- harmonise_data(expo_dat, outcome_dat)
+```
+
+Running GCA
+```{bash}
+/scratch/users/k20065375/ldsc/ldsc.py --rg mw_munged.sumstats.gz,mcbp_munged.sumstats.gz --ref-ld-chr eur_w_ld_chr/ --w-ld-chr eur_w_ld_chr/ --out mw_cbp_ldsc
+
+/scratch/users/k20065375/ldsc/munge_sumstats.py --sumstats mw_sumstats.txt --out /scratch/prj/dtr_incom/edward/mw_munged --merge-alleles /scratch/users/k20065375/ldsc/w_hm3.snplist --chunksize 500000
+```
+
+Making GCA graph
+```{r}
+# make GCA graph
+
+mr_data$analysis_label <- paste(mr_data$p1, "→", mr_data$p2)
+
+mr_data$significance <- ifelse(mr_data$p_value < 0.001, "p < 0.001",
+                               ifelse(mr_data$p_value < 0.01, "p < 0.01",
+                                      ifelse(mr_data$p_value < 0.05, "p < 0.05", "Not significant")))  
+
+mr_data$significance <- factor(mr_data$significance, 
+                               levels = c("p < 0.001", "p < 0.01", "p < 0.05", "Not significant"))
+
+p1 <- ggplot(mr_data, aes(x = reorder(analysis_label, rg), y = rg, fill = significance)) +
+  geom_col(alpha = 0.8) +
+  geom_text(aes(label = round(rg, 3)), 
+            hjust = ifelse(mr_data$rg >= 0, -0.1, 1.1),
+            size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = c("p < 0.001" = "#d73027", 
+                               "p < 0.01" = "#fc8d59", 
+                               "p < 0.05" = "#fee08b", 
+                               "Not significant" = "#999999"),
+                    name = "Significance") +
+  labs(
+    title = "Genetic Correlations (rg) Between Traits",
+    subtitle = "LDSC Genetic Correlation Analysis",
+    x = "Trait Pair",
+    y = "Genetic Correlation (rg)",
+    caption = "Values shown on bars. Color indicates statistical significance."
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+  coord_flip()
+```
+
+
+Loading and fixing FinnGen data
+```{r}
+library(data.table)
+library(dplyr)
+df <- fread('M13_DORSALGIA_meta_out_filtered.tsv.gz',header=T)
+df <- df %>%
++ select(rsid, REF, ALT, fg_beta, fg_pval, fg_sebeta, fg_af_alt)
+
+df %>%
++ rename(SNP = 'rsid', A1 = 'REF', A2 = 'ALT', BETA = 'fg_beta', P = 'fg_pval', SE = 'fg_sebeta', EAF = 'fg_af_alt')
+
+fwrite(df, file = 'fg_cbp_sumstats.txt', row.names = F, sep = '\t', quote = FALSE)
+```
+
+
+Running MR
+```{r}
+df <- fread('fg_cbp_sumstats.txt', header = T)
+
+outcome <- read_outcome_data(filename = 'fg2_cbp_sumstats.txt', sep = '\t', snp_col = 'SNP', beta_col = 'BETA', se_col = 'SE', effect_allele_col = 'A1', other_allele_col = 'A2', eaf_col = 'EAF', pval_col = 'P')
+
+exp <- read_exposure_data(filename = 'SH2H_sumstats.txt', sep = '\t', snp_col = 'SNP', beta_col = 'BETA', se_col = 'SE', effect_allele_col = 'A1', other_allele_col = 'A2', eaf_col = 'EAF', pval_col = 'P')
+
+expo <- exp[exp$pval.exposure<5e-8,]
+
+expo <- clump_data(expo)
+
+dat_harm <- harmonise_data(expo,outcome)
+
+dat <- dat[dat$pval.outcome>5e-8,]
+
+mr(dat)
+
+mr_heterogeneity(dat)
+mr_pleiotropy_test(dat)
+```
+
+Filtering SNPs
+```{r}
+full_beta <- results$b[results$method == "Inverse variance weighted"]
+loo <- mr_leaveoneout(dat_harm)
+loo$abs_diff <- abs(loo$b - full_beta)
+threshold <- mean(loo$abs_diff, na.rm = TRUE) + 0.5 * sd(loo$abs_diff, na.rm = TRUE)
+outliers <- loo$SNP[loo$abs_diff > threshold]
+dat_filtered <- dat_harm[!dat_harm$SNP %in% outliers, ]
+
+mr(dat_filtered)
+mr_heterogeneity(dat_harm)
+mr_heterogeneity(dat_filtered)
+mr_pleiotropy_test(dat_filtered)
+```
+
+Making LOO plots
+```{r}
+p_loo <- ggplot(loo_plot, aes(x = snp_order, y = b, color = outlier_status)) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2, alpha = 0.7) +
+  geom_hline(yintercept = full_beta, linetype = "dashed", color = "blue", linewidth = 1) +
+  geom_hline(yintercept = results_filtered$b[results_filtered$method == "Inverse variance weighted"], 
+             linetype = "dashed", color = "red", linewidth = 1) +
+  scale_color_manual(values = c("Normal" = "gray60", "Outlier" = "red"), 
+                     name = "SNP Status") +
+  labs(
+    title = "Leave-One-Out Analysis",
+    subtitle = paste("SH2H → Chronic Back Pain (", nrow(loo_plot), " instruments)", sep = ""),
+    x = "SNP (ordered by effect size)",
+    y = "MR Effect (95% CI)",
+    caption = paste("Blue line: Full dataset (β =", round(full_beta, 3), ")\n",
+                    "Red line: Outliers removed (β =", 
+                    round(results_filtered$b[results_filtered$method == "Inverse variance weighted"], 3), ")\n",
+                    "Red points:", length(outliers), "outliers identified")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+```
+
+Making LOO plots and MR plots
+```{r}
+mr_scatter_plot(results, dat_filtered)
+
+
+loo_original <- mr_leaveoneout(dat_harm)
+loo_filtered <- mr_leaveoneout(dat_filtered)
+
+# Identify which SNPs were removed
+removed_snps <- setdiff(dat_harm$SNP, dat_filtered$SNP)
+
+# Add status to original loo results
+loo_original$status <- ifelse(loo_original$SNP %in% removed_snps, "Removed", "Kept")
+loo_original$status[loo_original$SNP == "All"] <- "Overall"
+
+# Create the plot
+library(ggplot2)
+ggplot(loo_original[loo_original$SNP != "All", ], 
+       aes(x = b, y = 1:nrow(loo_original[loo_original$SNP != "All", ]))) +
+  geom_point(aes(color = status), alpha = 0.7, size = 1.5) +
+  scale_color_manual(values = c("Kept" = "grey", "Removed" = "red")) +
+  geom_vline(xintercept = loo_original$b[loo_original$SNP == "All"], 
+             color = "blue", linetype = "dashed", alpha = 0.7) +
+  geom_vline(xintercept = loo_filtered$b[loo_filtered$SNP == "All"], 
+             color = "green", linetype = "dashed", alpha = 0.7) +
+  labs(x = "MR Effect", y = "SNP Index", color = "SNP Status",
+       title = "Leave-One-Out Analysis: Before vs After Outlier Removal",
+       subtitle = "Blue line: Original estimate, Green line: Filtered estimate") +
+  theme_minimal()
+```
+
